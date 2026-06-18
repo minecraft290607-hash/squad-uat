@@ -1,0 +1,82 @@
+// firestore.rules
+// Скопируй это в Firebase Console → Firestore → Rules
+// или задеплой через: firebase deploy --only firestore:rules
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Вспомогательная функция — пользователь авторизован
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Вспомогательная функция — это документ текущего пользователя
+    function isOwner(uid) {
+      return request.auth.uid == uid;
+    }
+
+    // ── USERS ──────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      // Читать профили могут все авторизованные
+      allow read: if isAuth();
+
+      // Создать профиль может только сам пользователь (при регистрации)
+      allow create: if isAuth() && isOwner(userId);
+
+      // Редактировать только свой профиль, только поля bio и avatar
+      allow update: if isAuth() && isOwner(userId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['bio', 'avatar', 'color']);
+
+      // Удаление запрещено
+      allow delete: if false;
+    }
+
+    // ── POSTS ──────────────────────────────────────────────────────────────
+    match /posts/{postId} {
+      // Читать посты могут все авторизованные
+      allow read: if isAuth();
+
+      // Создать пост может любой авторизованный от своего имени
+      allow create: if isAuth()
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 2000;
+
+      // Обновить пост: автор может редактировать текст,
+      // любой авторизованный может менять только likes
+      allow update: if isAuth() && (
+        // Автор редактирует текст
+        (isOwner(resource.data.authorId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text']))
+        ||
+        // Любой меняет только лайки
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+      );
+
+      // Удалить пост может только автор
+      allow delete: if isAuth() && isOwner(resource.data.authorId);
+
+      // ── COMMENTS (subcollection) ────────────────────────────────────────
+      match /comments/{commentId} {
+        // Читать комментарии могут все авторизованные
+        allow read: if isAuth();
+
+        // Создать комментарий от своего имени
+        allow create: if isAuth()
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000;
+
+        // Редактирование комментариев запрещено
+        allow update: if false;
+
+        // Удалить комментарий может только автор
+        allow delete: if isAuth() && isOwner(resource.data.authorId);
+      }
+    }
+  }
+}
